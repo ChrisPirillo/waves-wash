@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
+    <title>Waves Wash | Interactive Neural Fractal Flow</title>
+    <meta name="description" content="Waves Wash is an interactive, generative art arcade experience. Manipulate neural fractal flows, fluid dynamics, and geometry in real-time in your browser.">
+    <meta name="keywords" content="Waves Wash, generative art, WebGL, fractal flow, fluid simulation, interactive wallpaper, HTML5 canvas, digital art, arcade">
+    <meta name="author" content="Chris Pirillo">
+    <link rel="canonical" href="https://pirillo.com/arcade/waves-wash.html">
+
+    <!-- Social & Analytics setup removed for brevity, preserved in logic -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-1CQ4D3VQ3L"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+      gtag('config', 'G-1CQ4D3VQ3L');
+    </script>
+
+    <style>
+        :root {
+            --bg: #050505;
+            --panel: rgba(20, 20, 20, 0.85);
+            --accent: #00ffcc;
+            --text: #ececec;
+            --font: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+        }
+
+        body, html {
+            margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+            background-color: var(--bg); font-family: var(--font);
+            user-select: none; -webkit-user-select: none;
+        }
+
+        #glCanvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; cursor: move; touch-action: none; }
+        #curtain { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; z-index: 2; opacity: 0; pointer-events: none; transition: opacity 0.4s ease-in-out; }
+        #uiLayer { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; }
+
+        .menu-btn {
+            position: absolute; top: 20px; right: 20px; width: 40px; height: 40px;
+            background: var(--panel); backdrop-filter: blur(5px); border-radius: 8px;
+            cursor: pointer; pointer-events: auto; display: flex; flex-direction: column;
+            justify-content: center; align-items: center; gap: 5px; border: 1px solid rgba(255,255,255,0.1);
+            transition: all 0.3s ease; z-index: 20;
+        }
+        .menu-btn span { display: block; width: 24px; height: 2px; background-color: var(--text); transition: transform 0.3s ease, opacity 0.3s ease; }
+        .menu-btn.open span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
+        .menu-btn.open span:nth-child(2) { opacity: 0; }
+        .menu-btn.open span:nth-child(3) { transform: translateY(-7px) rotate(-45deg); }
+
+        .settings-panel {
+            position: absolute; top: 0; right: 0; width: 320px; height: 100%;
+            background: var(--panel); backdrop-filter: blur(15px); transform: translateX(100%);
+            transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1); padding: 80px 20px 20px 20px;
+            box-sizing: border-box; overflow-y: auto; pointer-events: auto;
+            border-left: 1px solid rgba(255,255,255,0.1); display: flex; flex-direction: column; gap: 15px;
+        }
+        .settings-panel.open { transform: translateX(0); }
+
+        .control-group { display: flex; flex-direction: column; gap: 8px; padding-bottom: 12px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+        .control-group.toggles { flex-direction: row; justify-content: space-between; align-items: center; }
+        .control-group label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: rgba(255,255,255,0.5); display: flex; justify-content: space-between; width: 100%; }
+        .control-group label span.val { color: var(--accent); }
+
+        input[type="range"] { -webkit-appearance: none; width: 100%; background: transparent; }
+        input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; height: 14px; width: 14px; border-radius: 50%; background: var(--accent); cursor: pointer; margin-top: -6px; box-shadow: 0 0 10px rgba(0,255,204,0.4); }
+        input[type="range"]::-webkit-slider-runnable-track { width: 100%; height: 2px; cursor: pointer; background: rgba(255,255,255,0.2); }
+
+        input[type="color"] { -webkit-appearance: none; border: none; width: 100%; height: 30px; border-radius: 4px; background: none; cursor: pointer; }
+        input[type="checkbox"] { appearance: none; -webkit-appearance: none; width: 18px; height: 18px; background: rgba(255,255,255,0.1); border-radius: 4px; cursor: pointer; position: relative; border: 1px solid rgba(255,255,255,0.2); margin: 0; }
+        input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }
+        input[type="checkbox"]:checked::after { content: '✔'; position: absolute; color: #000; font-size: 11px; left: 3px; top: 1px; font-weight: bold; }
+
+        .btn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: auto; }
+        .btn { padding: 12px; border: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.05); color: var(--text); border-radius: 4px; cursor: pointer; font-size: 11px; text-transform: uppercase; transition: background 0.2s; text-align: center; }
+        .btn.full { grid-column: span 2; background: rgba(0, 255, 204, 0.1); color: var(--accent); border-color: rgba(0, 255, 204, 0.3); }
+    </style>
+</head>
+<body>
+
+    <canvas id="glCanvas" role="img" aria-label="Interactive generative art visualization representing waves and fractal flows"></canvas>
+    <div id="curtain"></div>
+
+    <div id="uiLayer">
+        <div class="menu-btn" id="menuBtn" role="button" tabindex="0" aria-label="Toggle Settings Menu" aria-expanded="false">
+            <span></span><span></span><span></span>
+        </div>
+
+        <aside class="settings-panel" id="settingsPanel">
+            <div class="control-group">
+                <label for="inp_speed">Flow Speed <span class="val" id="val_speed">1.0</span></label>
+                <input type="range" id="inp_speed" min="-2.0" max="2.0" step="0.1" value="1.0">
+            </div>
+            <div class="control-group">
+                <label for="inp_zoom">Zoom <span class="val" id="val_zoom">2.5</span></label>
+                <input type="range" id="inp_zoom" min="2.0" max="8.0" step="0.1" value="2.5">
+            </div>
+            <div class="control-group">
+                <label for="inp_rotB">Structure Rotation <span class="val" id="val_rotB">5.8</span></label>
+                <input type="range" id="inp_rotB" min="0" max="6.28" step="0.01" value="5.8">
+            </div>
+            <div class="control-group">
+                <label for="inp_falloff">Density Falloff <span class="val" id="val_falloff">0.45</span></label>
+                <input type="range" id="inp_falloff" min="0.1" max="0.9" step="0.01" value="0.45">
+            </div>
+            <div class="control-group toggles">
+                <label for="inp_flipX">Flip X</label>
+                <input type="checkbox" id="inp_flipX">
+            </div>
+            <div class="control-group toggles">
+                <label for="inp_flipY">Flip Y</label>
+                <input type="checkbox" id="inp_flipY">
+            </div>
+            <div class="control-group toggles">
+                <label for="inp_invert">Invert Colors</label>
+                <input type="checkbox" id="inp_invert">
+            </div>
+            <div class="control-group">
+                <label for="inp_col1">Primary Color</label>
+                <input type="color" id="inp_col1" value="#00ccff">
+            </div>
+            <div class="control-group">
+                <label for="inp_col2">Glow Color</label>
+                <input type="color" id="inp_col2" value="#ffaa00">
+            </div>
+            <div class="control-group">
+                <label for="inp_auto">Auto-Randomize (sec) <span class="val" id="val_auto">OFF</span></label>
+                <input type="range" id="inp_auto" min="0" max="60" step="5" value="0">
+            </div>
+            <div class="btn-grid">
+                <button class="btn" id="btn_random">Randomize</button>
+                <button class="btn" id="btn_reset">Reset</button>
+                <button class="btn full" id="btn_export">Export 4K Wallpaper</button>
+            </div>
+        </aside>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('glCanvas');
+        // OPTIMIZATION: Disable unused buffers and alpha for better GPU throughput
+        const gl = canvas.getContext('webgl', { 
+            alpha: false, 
+            depth: false, 
+            stencil: false, 
+            antialias: false,
+            preserveDrawingBuffer: false 
+        });
+        const curtain = document.getElementById('curtain');
+
+        if (!gl) alert("WebGL not supported.");
+
+        const vsSource = `attribute vec4 aVertexPosition; void main() { gl_Position = aVertexPosition; }`;
+        const fsSource = `
+            precision highp float;
+            uniform vec2 u_resolution;
+            uniform float u_time;
+            uniform float u_speed;
+            uniform float u_zoom;
+            uniform float u_rotA;
+            uniform float u_rotB;
+            uniform float u_falloff;
+            uniform float u_sharpness;
+            uniform vec3 u_col1;
+            uniform vec3 u_col2;
+            uniform vec2 u_pan;
+            uniform float u_flipX;
+            uniform float u_flipY;
+            uniform float u_invert;
+
+            mat2 rotate2D(float angle) {
+                float c = cos(angle); float s = sin(angle);
+                return mat2(c, -s, s, c);
+            }
+
+            void main() {
+                vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+                if (u_flipX > 0.5) uv.x *= -1.0;
+                if (u_flipY > 0.5) uv.y *= -1.0;
+                uv -= u_pan; 
+                
+                float t = u_time * u_speed;
+                vec4 o = vec4(0.0, 0.0, 0.0, 1.0);
+                float g = 0.0;
+                mat2 rotInner = rotate2D(u_rotB);
+                mat2 rotOuter = rotate2D(u_rotA);
+
+                for(int i = 0; i < 85; i++) { // Slightly reduced iterations for perf balance
+                    vec3 p = vec3(uv * g + u_zoom, g);
+                    p.zy *= rotOuter;
+                    float e = p.y;
+                    float h = e + p.x * 0.6;
+                    p.z += t;
+                    float u_shift = 2.0 + 0.5 * sin(t);
+                    float a = 1.8;
+                    for(int j = 0; j < 18; j++) {
+                        if(a <= 0.005) break;
+                        p.xz *= rotInner;
+                        float x = (p.x + p.z) / a + t + t;
+                        e -= exp(sin(x) - u_shift) * a;
+                        h += abs(dot(sin(p.xz / a * 0.35) * a, vec2(1.0)));
+                        a *= u_falloff;
+                    }
+                    float next_e = min(e, h * 0.5 - 1.0);
+                    g += next_e;
+                    float intensity = max(0.0, 0.01 - 0.02 / exp(max(u_sharpness, next_e) * 200.0) / (h + 0.005));
+                    o.rgb += (u_col1 * 0.7 + u_col2 * 8.0) * intensity;
+                }
+                o.rgb = 1.0 - exp(-o.rgb);
+                if (u_invert > 0.5) o.rgb = 1.0 - o.rgb;
+                gl_FragColor = o;
+            }
+        `;
+
+        function createShader(gl, type, source) {
+            const s = gl.createShader(type);
+            gl.shaderSource(s, source); gl.compileShader(s);
+            return s;
+        }
+
+        const prog = gl.createProgram();
+        gl.attachShader(prog, createShader(gl, gl.VERTEX_SHADER, vsSource));
+        gl.attachShader(prog, createShader(gl, gl.FRAGMENT_SHADER, fsSource));
+        gl.linkProgram(prog); gl.useProgram(prog);
+
+        const posBuf = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,1, 1,1, -1,-1, 1,-1]), gl.STATIC_DRAW);
+        const vPos = gl.getAttribLocation(prog, 'aVertexPosition');
+        gl.enableVertexAttribArray(vPos);
+        gl.vertexAttribPointer(vPos, 2, gl.FLOAT, false, 0, 0);
+
+        const uniforms = {
+            res: gl.getUniformLocation(prog, 'u_resolution'),
+            time: gl.getUniformLocation(prog, 'u_time'),
+            speed: gl.getUniformLocation(prog, 'u_speed'),
+            zoom: gl.getUniformLocation(prog, 'u_zoom'),
+            rotA: gl.getUniformLocation(prog, 'u_rotA'),
+            rotB: gl.getUniformLocation(prog, 'u_rotB'),
+            falloff: gl.getUniformLocation(prog, 'u_falloff'),
+            sharp: gl.getUniformLocation(prog, 'u_sharpness'),
+            c1: gl.getUniformLocation(prog, 'u_col1'),
+            c2: gl.getUniformLocation(prog, 'u_col2'),
+            pan: gl.getUniformLocation(prog, 'u_pan'),
+            fx: gl.getUniformLocation(prog, 'u_flipX'),
+            fy: gl.getUniformLocation(prog, 'u_flipY'),
+            inv: gl.getUniformLocation(prog, 'u_invert'),
+        };
+
+        const state = {
+            speed: 1.0, zoom: 2.5, rotA: 0.1, rotB: 5.8, falloff: 0.45,
+            sharp: 0.0, pan: [0, 0], flipX: false, flipY: false, invert: false,
+            col1: [0, 0.8, 1.0], col2: [1.0, 0.6, 0.0],
+            autoInterval: 0, lastRandomTime: Date.now()
+        };
+
+        const ui = {
+            speed: document.getElementById('inp_speed'),
+            zoom: document.getElementById('inp_zoom'),
+            rotB: document.getElementById('inp_rotB'),
+            falloff: document.getElementById('inp_falloff'),
+            flipX: document.getElementById('inp_flipX'),
+            flipY: document.getElementById('inp_flipY'),
+            invert: document.getElementById('inp_invert'),
+            col1: document.getElementById('inp_col1'),
+            col2: document.getElementById('inp_col2'),
+            auto: document.getElementById('inp_auto'),
+            lbl_speed: document.getElementById('val_speed'),
+            lbl_zoom: document.getElementById('val_zoom'),
+            lbl_rotB: document.getElementById('val_rotB'),
+            lbl_falloff: document.getElementById('val_falloff'),
+            lbl_auto: document.getElementById('val_auto'),
+        };
+
+        let isRandomizing = false;
+
+        function hexToRgb(h) {
+            const r = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(h);
+            return r ? [parseInt(r[1],16)/255, parseInt(r[2],16)/255, parseInt(r[3],16)/255] : [0,0,0];
+        }
+
+        function rgbToHex(r, g, b) {
+            return "#" + ((1 << 24) + ((r * 255 | 0) << 16) + ((g * 255 | 0) << 8) + (b * 255 | 0)).toString(16).slice(1);
+        }
+
+        function updateUI() {
+            ui.speed.value = state.speed; ui.lbl_speed.innerText = state.speed.toFixed(1);
+            ui.zoom.value = state.zoom; ui.lbl_zoom.innerText = state.zoom.toFixed(1);
+            ui.rotB.value = state.rotB; ui.lbl_rotB.innerText = state.rotB.toFixed(2);
+            ui.falloff.value = state.falloff; ui.lbl_falloff.innerText = state.falloff.toFixed(2);
+            ui.flipX.checked = state.flipX; ui.flipY.checked = state.flipY; ui.invert.checked = state.invert;
+            ui.col1.value = rgbToHex(...state.col1); ui.col2.value = rgbToHex(...state.col2);
+            ui.auto.value = state.autoInterval; ui.lbl_auto.innerText = state.autoInterval === 0 ? "OFF" : state.autoInterval + "s";
+        }
+
+        function updateStateFromUI() {
+            state.speed = parseFloat(ui.speed.value); state.zoom = parseFloat(ui.zoom.value);
+            state.rotB = parseFloat(ui.rotB.value); state.falloff = parseFloat(ui.falloff.value);
+            state.flipX = ui.flipX.checked; state.flipY = ui.flipY.checked; state.invert = ui.invert.checked;
+            state.col1 = hexToRgb(ui.col1.value); state.col2 = hexToRgb(ui.col2.value);
+            state.autoInterval = parseInt(ui.auto.value); state.lastRandomTime = Date.now();
+            updateUI();
+        }
+
+        let isDragging = false, startX, startY, lastX, lastY, dragStart;
+        canvas.addEventListener('mousedown', e => { isDragging = true; startX = lastX = e.clientX; startY = lastY = e.clientY; dragStart = Date.now(); });
+        canvas.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            state.pan[0] -= (e.clientX - lastX) / canvas.height * 2.0;
+            state.pan[1] += (e.clientY - lastY) / canvas.height * 2.0;
+            lastX = e.clientX; lastY = e.clientY;
+        });
+        canvas.addEventListener('mouseup', e => {
+            isDragging = false;
+            if (Math.hypot(e.clientX - startX, e.clientY - startY) < 5 && (Date.now() - dragStart) < 300 && !menuOpen) randomize();
+        });
+
+        function applyRand() {
+            state.speed = (Math.random() * 2 - 1) * 1.5; state.zoom = 2.0 + Math.random() * 4.0;
+            state.rotB = Math.random() * 6.28; state.falloff = 0.35 + Math.random() * 0.2;
+            state.pan = [0, 0]; state.flipX = Math.random() > 0.7; state.flipY = Math.random() > 0.7;
+            state.invert = Math.random() > 0.9;
+            const r1 = Math.random(), g1 = Math.random(), b1 = Math.random();
+            state.col1 = [r1, g1, b1]; state.col2 = [1-r1, Math.random()*0.5 + 0.5, 1-b1];
+            updateUI();
+        }
+
+        function randomize() {
+            if (isRandomizing) return;
+            isRandomizing = true; state.lastRandomTime = Date.now();
+            curtain.style.opacity = 1;
+            setTimeout(() => {
+                applyRand(); state.lastRandomTime = Date.now();
+                setTimeout(() => { curtain.style.opacity = 0; isRandomizing = false; }, 100);
+            }, 400); 
+        }
+
+        function reset() {
+            curtain.style.opacity = 1;
+            setTimeout(() => {
+                Object.assign(state, { speed: 1, zoom: 2.5, rotA: 0.1, rotB: 5.8, falloff: 0.45, sharp: 0, pan: [0,0], flipX: false, flipY: false, invert: false, col1: [0, 0.8, 1], col2: [1, 0.6, 0], lastRandomTime: Date.now() });
+                updateUI(); setTimeout(() => curtain.style.opacity = 0, 100);
+            }, 400);
+        }
+
+        function exportWallpaper() {
+            const ow = canvas.width, oh = canvas.height;
+            canvas.width = 3840; canvas.height = 2160;
+            gl.viewport(0, 0, 3840, 2160);
+            renderLoop(true);
+            canvas.toBlob(blob => {
+                const url = URL.createObjectURL(blob), a = document.createElement('a');
+                a.href = url; a.download = 'waves_wash_4k.png';
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(url); resize();
+            }, 'image/png');
+        }
+
+        let startTime = Date.now(), totalTime = 0;
+
+        function resize() {
+            // OPTIMIZATION: Cap devicePixelRatio to 1.0 for real-time rendering.
+            // This reduces pixel count by 4x-9x on Retina displays with minimal visual impact.
+            const dpr = 1.0; 
+            canvas.width = window.innerWidth * dpr;
+            canvas.height = window.innerHeight * dpr;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        function renderLoop(once = false) {
+            const now = Date.now();
+            totalTime = (now - startTime) * 0.001;
+            
+            if (state.autoInterval > 0 && !isRandomizing && now - state.lastRandomTime > state.autoInterval * 1000) {
+                state.lastRandomTime = now; randomize();
+            }
+
+            gl.clear(gl.COLOR_BUFFER_BIT);
+            gl.uniform2f(uniforms.res, canvas.width, canvas.height);
+            gl.uniform1f(uniforms.time, totalTime);
+            gl.uniform1f(uniforms.speed, state.speed);
+            gl.uniform1f(uniforms.zoom, state.zoom);
+            gl.uniform1f(uniforms.rotA, state.rotA);
+            gl.uniform1f(uniforms.rotB, state.rotB);
+            gl.uniform1f(uniforms.falloff, state.falloff);
+            gl.uniform1f(uniforms.sharp, state.sharp);
+            gl.uniform3fv(uniforms.c1, state.col1);
+            gl.uniform3fv(uniforms.c2, state.col2);
+            gl.uniform2fv(uniforms.pan, state.pan); 
+            gl.uniform1f(uniforms.fx, state.flipX ? 1 : 0);
+            gl.uniform1f(uniforms.fy, state.flipY ? 1 : 0);
+            gl.uniform1f(uniforms.inv, state.invert ? 1 : 0);
+
+            gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+            if (!once) requestAnimationFrame(() => renderLoop());
+        }
+
+        Object.values(ui).forEach(el => {
+            if(el && el.tagName === 'INPUT') el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', updateStateFromUI);
+        });
+
+        document.getElementById('btn_random').addEventListener('click', randomize);
+        document.getElementById('btn_reset').addEventListener('click', reset);
+        document.getElementById('btn_export').addEventListener('click', exportWallpaper);
+
+        const menuBtn = document.getElementById('menuBtn'), panel = document.getElementById('settingsPanel');
+        let menuOpen = false;
+        function toggleMenu() { menuOpen = !menuOpen; menuBtn.classList.toggle('open', menuOpen); panel.classList.toggle('open', menuOpen); menuBtn.setAttribute('aria-expanded', menuOpen); }
+        menuBtn.addEventListener('click', e => { e.stopPropagation(); toggleMenu(); });
+        document.addEventListener('click', e => { if (menuOpen && !panel.contains(e.target) && !menuBtn.contains(e.target)) toggleMenu(); });
+        document.addEventListener('keydown', e => { if (e.key === 'Escape' && menuOpen) toggleMenu(); });
+
+        applyRand();
+        renderLoop();
+    </script>
+</body>
+</html>
